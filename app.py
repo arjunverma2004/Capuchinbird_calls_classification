@@ -25,27 +25,48 @@ def load_model():
 # Load the model
 model = load_model()
 
-# --- Audio Preprocessing Functions ---
+# --- Audio Preprocessing Functions (Exact match to notebook) ---
 def load_audio_16k_mono(filename):
     """
-    Load an audio file (MP3 or WAV), convert it to a float tensor, and resample
-    to 16 kHz single-channel audio using librosa.
-    This is the most robust way to handle both file types.
+    Load an audio file, convert it to a float tensor, resample to 16 kHz
+    single-channel audio. This function is a close replica of your notebook.
     """
     try:
-        wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
-        wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
+        # Try to load with tf.audio.decode_wav first, just like your notebook
+        file_contents = tf.io.read_file(filename)
+        wav, sample_rate = tf.audio.decode_wav(file_contents, desired_channels=1)
+        wav = tf.squeeze(wav, axis=-1)
+        sample_rate = tf.cast(sample_rate, dtype=tf.int64)
+
+        # Resample with librosa inside a tf.numpy_function
+        def _resample_numpy(wav_np, sample_rate_np):
+            return librosa.resample(wav_np, orig_sr=sample_rate_np, target_sr=16000)
+
+        wav = tf.numpy_function(
+            func=_resample_numpy,
+            inp=[wav, sample_rate],
+            Tout=tf.float32)
+
         return wav
     except Exception as e:
-        st.error(f"Error loading or processing audio file with librosa: {e}")
-        return None
+        # Fallback to librosa.load if the above fails (e.g., if the file is an MP3)
+        st.warning(f"Using librosa.load as a fallback due to an error: {e}")
+        try:
+            wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
+            wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
+            return wav
+        except Exception as e_fallback:
+            st.error(f"Error loading audio file with librosa: {e_fallback}")
+            return None
 
-def preprocess_mp3(sample):
+
+def preprocess_mp3(sample, index):
     """
     Convert a 3-second audio clip into a spectrogram for prediction.
     This function is an exact copy of the one used for inference in your notebook.
     """
     # sample is expected to be a tensor of shape [48000]
+    sample = sample[0]
     zero_padding = tf.zeros([48000] - tf.shape(sample), dtype=tf.float32)
     wav = tf.concat([zero_padding, sample], 0)
     spectrogram = tf.signal.stft(wav, frame_length=320, frame_step=32)
@@ -53,6 +74,7 @@ def preprocess_mp3(sample):
     spectrogram = tf.expand_dims(spectrogram, axis=2)
     spectrogram = tf.ensure_shape(spectrogram, (1491, 257, 1))
     return spectrogram
+
 
 # --- Main Streamlit App Logic ---
 
@@ -116,7 +138,7 @@ if uploaded_files:
     for uploaded_file in uploaded_files:
         st.subheader(f"Analyzing: {uploaded_file.name}")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpfile:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmpfile:
             tmpfile.write(uploaded_file.getvalue())
             tmp_path = tmpfile.name
         
@@ -124,9 +146,9 @@ if uploaded_files:
             wav = load_audio_16k_mono(tmp_path)
             
             if wav is not None and len(wav) > 0:
-                # Use overlapping windows with a smaller stride to increase detection chances.
+                # Revert to the notebook's exact slicing strategy
                 sequence_length = 48000 # 3 seconds
-                sequence_stride = 16000 # 1-second stride for overlapping windows
+                sequence_stride = 48000 # Correctly set to non-overlapping to match notebook
                 
                 audio_slices = tf.keras.utils.timeseries_dataset_from_array(
                     wav, 
@@ -137,7 +159,7 @@ if uploaded_files:
                 )
                 
                 # Apply the notebook's preprocessing function
-                audio_slices = audio_slices.map(lambda x, i: preprocess_mp3(x[0]))
+                audio_slices = audio_slices.map(preprocess_mp3)
                 
                 # Process predictions in batches to avoid memory issues
                 all_predictions = []
@@ -148,7 +170,7 @@ if uploaded_files:
                         all_predictions.extend(predictions.flatten())
                 
                 # Convert predictions to binary classes using the specified threshold
-                class_preds = [1 if prediction > 0.5 else 0 for prediction in all_predictions]
+                class_preds = [1 if prediction > 0.99 else 0 for prediction in all_predictions]
                 
                 # Group consecutive detections to count unique calls
                 calls = tf.math.reduce_sum([key for key, group in groupby(class_preds)]).numpy()
