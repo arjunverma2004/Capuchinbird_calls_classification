@@ -33,7 +33,6 @@ def load_mp3_16k_mono(filename):
     """
     try:
         # Load audio using librosa, resampling to 16kHz and converting to mono
-        # Using 'soxr_hq' for high-quality resampling, matching best practices.
         wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
         # Convert the numpy array to a TensorFlow tensor
         wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
@@ -42,15 +41,13 @@ def load_mp3_16k_mono(filename):
         st.error(f"Error loading or processing audio file with librosa: {e}")
         return None
 
-def preprocess_mp3(sample, index):
+def preprocess_mp3(sample):
     """
-    Convert longer audio clips into windowed spectrograms for prediction.
+    Convert a 3-second audio clip into a spectrogram for prediction.
     """
-    # Ensure the sample tensor has a batch dimension (e.g., shape [1, 48000])
-    if len(tf.shape(sample)) > 1:
-        sample = sample[0]
-    
     # Pad the audio clip to a fixed length of 48000 samples
+    # This padding is now redundant as we pad the entire audio file first,
+    # but kept for safety.
     zero_padding = tf.zeros([48000] - tf.shape(sample), dtype=tf.float32)
     wav = tf.concat([zero_padding, sample], 0)
     
@@ -136,26 +133,29 @@ if uploaded_files:
             wav = load_mp3_16k_mono(tmp_path)
             
             if wav is not None and len(wav) > 0:
-                # --- FIX: Match the original notebook's sequence_stride ---
+                # --- FIX: Pad the entire audio file to be a multiple of sequence_length ---
                 sequence_length = 48000 # 3 seconds
-                sequence_stride = 48000 # Correctly set to match notebook (non-overlapping chunks)
+                total_samples = tf.shape(wav)[0]
                 
-                audio_slices = tf.keras.utils.timeseries_dataset_from_array(
-                    wav, 
-                    wav, 
-                    sequence_length=sequence_length, 
-                    sequence_stride=sequence_stride, 
-                    batch_size=1
-                )
+                # Calculate how many zeros to pad to make it a multiple of sequence_length
+                padding_needed = (sequence_length - (total_samples % sequence_length)) % sequence_length
+                wav_padded = tf.pad(wav, [[0, padding_needed]])
                 
+                # Reshape into 3-second slices
+                num_slices = tf.shape(wav_padded)[0] // sequence_length
+                audio_slices = tf.reshape(wav_padded, [num_slices, sequence_length])
+                
+                # Create a TensorFlow dataset
+                audio_dataset = tf.data.Dataset.from_tensor_slices(audio_slices)
+
                 # Preprocess the audio slices to create spectrograms
-                audio_slices = audio_slices.map(preprocess_mp3)
+                audio_dataset = audio_dataset.map(preprocess_mp3)
                 
                 # Process predictions in batches to avoid memory issues
                 all_predictions = []
                 batch_size = 64
                 with st.spinner("Processing audio... This may take a moment."):
-                    for batch in audio_slices.batch(batch_size):
+                    for batch in audio_dataset.batch(batch_size):
                         predictions = model.predict(batch, verbose=0)
                         all_predictions.extend(predictions.flatten())
                 
