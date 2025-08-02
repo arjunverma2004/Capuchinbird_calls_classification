@@ -6,6 +6,9 @@ import librosa
 import numpy as np
 from itertools import groupby
 
+st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
+
+
 # Load the pre-trained model
 @st.cache_resource
 def load_model():
@@ -61,7 +64,6 @@ def preprocess_mp3(sample, index):
 
 # --- Main Streamlit App Logic ---
 
-st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
 
 # --- UI Styling ---
 st.markdown("""
