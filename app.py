@@ -148,7 +148,7 @@ if uploaded_files:
                         all_predictions.extend(predictions.flatten())
                 
                 # Convert predictions to binary classes using the specified threshold
-                class_preds = [1 if prediction > 0.99 else 0 for prediction in all_predictions]
+                class_preds = [1 if prediction > 0.5 else 0 for prediction in all_predictions]
                 
                 # Group consecutive detections to count unique calls
                 calls = tf.math.reduce_sum([key for key, group in groupby(class_preds)]).numpy()
