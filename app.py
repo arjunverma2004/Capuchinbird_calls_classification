@@ -18,7 +18,7 @@ def load_model():
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
-        st.stop()
+        raise e  # Show full traceback in Streamlit logs
 
 # Load the model
 model = load_model()
