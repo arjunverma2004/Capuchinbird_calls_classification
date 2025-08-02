@@ -125,7 +125,7 @@ if uploaded_file is not None:
                 yhat = model.predict(audio_slices)
                 
                 # Apply the same threshold as in your notebook (0.99)
-                predictions = [1 if pred > 0.99 else 0 for pred in yhat]
+                predictions = [1 if pred > 0.9 else 0 for pred in yhat]
                 
                 # Group consecutive detections to count distinct call events
                 post_processed = [key for key, group in groupby(predictions)]
