@@ -83,11 +83,21 @@ def preprocess_mp3(sample, index):
 
 # --- Main Application UI ---
 
-st.title("🐦 Capuchinbird Call Counter")
-st.write("Upload a forest audio file (WAV or MP3). The model will analyze it in 3-second segments and count the number of distinct Capuchinbird calls.")
-st.info(f"ℹ️ For stability on this free platform, audio files are limited to **{MAX_DURATION_SECONDS} seconds**.")
+# --- UI Styling ---
+st.markdown("""
+<style>
+.main-header { font-size: 2.5em; font-weight: bold; color: #4CAF50; text-align: center; margin-bottom: 0.5em; }
+.sub-header { font-size: 1.5em; color: #333; text-align: center; margin-bottom: 1em; }
+.success-box { background-color: #e8f5e9; border-left: 5px solid #4CAF50; padding: 10px; margin-bottom: 10px; border-radius: 5px; }
+.warning-box { background-color: #fff3e0; border-left: 5px solid #ff9800; padding: 10px; margin-bottom: 10px; border-radius: 5px; }
+</style>
+""", unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "wav"])
+# --- Main Application ---
+st.markdown('<div class="main-header">Capuchinbird Call Classifier 🦜</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Upload audio (MP3, WAV) up to 15 minutes long.</div>', unsafe_allow_html=True)
+
+uploaded_files = st.file_uploader("Choose an audio file(s)", type=["wav", "mp3"], accept_multiple_files=True)
 
 if uploaded_file is not None:
     # Use a temporary file to save the upload
