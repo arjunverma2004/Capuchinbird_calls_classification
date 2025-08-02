@@ -7,7 +7,7 @@ import numpy as np
 from itertools import groupby
 
 # --- IMPORTANT: This must be the very first Streamlit command. ---
-st.set_page_config(page_title="models/calls_classifier.keras", layout="centered")
+st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
 
 # Load the pre-trained model
 @st.cache_resource
@@ -16,7 +16,7 @@ def load_model():
     try:
         # Suppress the optimizer-related warning which is harmless for inference
         with st.spinner("Loading model..."):
-            model = tf.keras.models.load_model('Capuchinbird_calls_classifier.keras', compile=False)
+            model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
