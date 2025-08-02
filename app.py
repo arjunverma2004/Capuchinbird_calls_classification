@@ -6,6 +6,9 @@ import librosa
 import numpy as np
 from itertools import groupby
 
+# --- IMPORTANT: This must be the very first Streamlit command. ---
+st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
+
 # Load the pre-trained model
 @st.cache_resource
 def load_model():
@@ -15,7 +18,6 @@ def load_model():
         with st.spinner("Loading model..."):
             model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
         return model
-    
     except Exception as e:
         st.error(f"Error loading the model: {e}")
         st.stop()
@@ -63,8 +65,6 @@ def preprocess_mp3(sample, index):
     return spectrogram
 
 # --- Main Streamlit App Logic ---
-
-st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
 
 # --- UI Styling ---
 st.markdown("""
@@ -187,4 +187,3 @@ if uploaded_files:
 
 st.markdown("---")
 st.info("Note: This app uses a pre-trained model to classify audio. The model's performance may vary.")
-
