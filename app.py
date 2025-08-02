@@ -16,7 +16,7 @@ def load_model():
     try:
         # Suppress the optimizer-related warning which is harmless for inference
         with st.spinner("Loading model..."):
-            model = tf.keras.models.load_model('model/calls_classifier.keras', compile=False)
+            model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
