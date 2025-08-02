@@ -48,16 +48,35 @@ def load_audio_16k_mono(filename):
         st.error(f"Error processing audio file: {e}")
         return None
 
+# ===================================================================
+#  FIXED FUNCTION: Robust padding and spectrogram creation
+# ===================================================================
 def create_spectrogram(wav_slice):
     """Converts a single audio slice to a spectrogram tensor."""
-    # The slice must be padded/trimmed to exactly 3 seconds (48000 samples)
-    zero_padding = tf.zeros([48000] - tf.shape(wav_slice), dtype=tf.float32)
-    wav = tf.concat([wav_slice, zero_padding], 0)
-    wav = tf.slice(wav, [0], [48000]) # Ensure it's exactly 48000 samples
+    
+    # We expect a 1D tensor, but the dataset gives us (1, n_samples)
+    # Squeeze it to remove the extra dimension
+    wav_slice = tf.squeeze(wav_slice)
+    
+    # Calculate how much padding is needed
+    slice_len = tf.shape(wav_slice)[0]
+    padding_needed = 48000 - slice_len
+    
+    # Add zero padding only if necessary
+    if padding_needed > 0:
+        zero_padding = tf.zeros([padding_needed], dtype=tf.float32)
+        wav = tf.concat([wav_slice, zero_padding], 0)
+    else:
+        # If the slice is already 48000 or longer, just use it
+        wav = wav_slice
+
+    # Ensure it's exactly 48000 samples by trimming any excess
+    wav = tf.slice(wav, [0], [48000])
 
     spectrogram = tf.signal.stft(wav, frame_length=320, frame_step=32)
     spectrogram = tf.abs(spectrogram)
     spectrogram = tf.expand_dims(spectrogram, axis=2)
+    
     return spectrogram
 
 
@@ -86,26 +105,21 @@ if uploaded_file is not None:
             wav = load_audio_16k_mono(tmp_filename)
             
             if wav is not None:
-                # Create 3-second (48000 samples) windows from the audio
                 audio_slices = tf.keras.utils.timeseries_dataset_from_array(
                     wav, wav, sequence_length=48000, sequence_stride=48000, batch_size=1
                 )
                 
-                # ===================================================================
-                #  FIX: Replace .map() with a direct for-loop for reliability
-                # ===================================================================
                 spectrograms = []
                 with st.spinner("Generating spectrograms for each segment..."):
-                    for audio_slice in audio_slices:
-                        # audio_slice is a tuple (data, label), we just need the data
-                        spec = create_spectrogram(audio_slice[0])
+                    for audio_slice_tuple in audio_slices:
+                        # The dataset yields tuples of (data, label), we just need the data
+                        spec = create_spectrogram(audio_slice_tuple[0])
                         spectrograms.append(spec)
 
                 if not spectrograms:
                     st.warning("Could not generate any spectrograms from the audio file.")
                     st.stop()
                     
-                # Stack all the individual spectrograms into a single batch tensor
                 spectrogram_batch = tf.stack(spectrograms)
 
         with st.spinner("Running model prediction..."):
@@ -114,7 +128,7 @@ if uploaded_file is not None:
         st.header("🔬 Prediction Analysis")
         
         st.subheader("1. Raw Model Probabilities")
-        st.write("These are the direct outputs from the model. They should now be different for each segment.")
+        st.write("These are the direct outputs from the model.")
         st.bar_chart(yhat.flatten())
         with st.expander("Show Raw Values as Text"):
             st.write(yhat.flatten())
