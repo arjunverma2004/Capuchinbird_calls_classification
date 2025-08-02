@@ -6,19 +6,18 @@ import librosa
 import numpy as np
 from itertools import groupby
 
-st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
-
-
 # Load the pre-trained model
 @st.cache_resource
 def load_model():
     """Loads the pre-trained Capuchinbird call classifier model."""
     try:
-        model = tf.keras.models.load_model('models/calls_classifier.keras')
+        # Suppress the optimizer-related warning which is harmless for inference
+        with st.spinner("Loading model..."):
+            model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
-        raise e  # Show full traceback in Streamlit logs
+        st.stop()
 
 # Load the model
 model = load_model()
@@ -31,7 +30,8 @@ def load_mp3_16k_mono(filename):
     """
     try:
         # Load audio using librosa, resampling to 16kHz and converting to mono
-        wav_np, _ = librosa.load(filename, sr=16000, mono=True)
+        # The 'res_type' parameter can be set for different resampling quality.
+        wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
         # Convert the numpy array to a TensorFlow tensor
         wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
         return wav
@@ -44,7 +44,6 @@ def preprocess_mp3(sample, index):
     Convert longer audio clips into windowed spectrograms for prediction.
     """
     # Ensure the sample tensor has a batch dimension (e.g., shape [1, 48000])
-    # timeseries_dataset_from_array can produce samples with a leading dimension of 1
     if len(tf.shape(sample)) > 1:
         sample = sample[0]
     
@@ -64,6 +63,7 @@ def preprocess_mp3(sample, index):
 
 # --- Main Streamlit App Logic ---
 
+st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
 
 # --- UI Styling ---
 st.markdown("""
@@ -135,13 +135,8 @@ if uploaded_files:
             # The load_mp3_16k_mono function handles both .wav and .mp3
             wav = load_mp3_16k_mono(tmp_path)
             
-            if wav is not None:
+            if wav is not None and len(wav) > 0:
                 # Create a TensorFlow dataset from the audio slices
-                # The original code uses a sequence_length of 48000 and stride of 48000,
-                # which is for the smaller clips. For longer forest recordings, the stride is often
-                # shorter to capture more potential calls. We will use a smaller stride for better
-                # detection, as seen in your section 9.3 example (16000). Let's use a conservative stride
-                # of 16000 to improve detection of shorter calls.
                 sequence_length = 48000 # 3 seconds
                 sequence_stride = 16000 # 1 second stride
                 
@@ -155,14 +150,18 @@ if uploaded_files:
                 
                 # Preprocess the audio slices to create spectrograms
                 audio_slices = audio_slices.map(preprocess_mp3)
-                audio_slices = audio_slices.batch(64)
                 
-                # Make predictions
-                yhat = model.predict(audio_slices)
+                # --- MEMORY OPTIMIZATION FIX ---
+                # We will process the audio in batches to avoid a huge memory allocation.
+                all_predictions = []
+                batch_size = 64
+                with st.spinner("Processing audio... This may take a moment."):
+                    for batch in audio_slices.batch(batch_size):
+                        predictions = model.predict(batch, verbose=0)
+                        all_predictions.extend(predictions.flatten())
                 
                 # Convert predictions to binary classes
-                # A threshold of 0.99 is used in your code, which is a good starting point.
-                class_preds = [1 if prediction > 0.99 else 0 for prediction in yhat]
+                class_preds = [1 if prediction > 0.99 else 0 for prediction in all_predictions]
                 
                 # Group consecutive detections to count unique calls
                 calls = tf.math.reduce_sum([key for key, group in groupby(class_preds)]).numpy()
@@ -176,9 +175,11 @@ if uploaded_files:
                     else:
                         st.markdown('<div class="warning-box">⚠️ **Result:** No Capuchinbird calls detected.</div>', unsafe_allow_html=True)
 
+            else:
+                st.warning(f"Could not process the file: `{uploaded_file.name}`. The audio might be empty or corrupt.")
+
         except Exception as e:
             st.error(f"An error occurred while processing `{uploaded_file.name}`: {e}")
-            # Ensure the temporary file is cleaned up even on error
         finally:
             if 'tmp_path' in locals() and os.path.exists(tmp_path):
                 os.remove(tmp_path)
