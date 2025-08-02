@@ -48,33 +48,29 @@ def load_audio_16k_mono(filename):
         st.error(f"Error processing audio file: {e}")
         return None
 
-# ===================================================================
-#  FIXED FUNCTION: Robust padding and spectrogram creation
-# ===================================================================
 def create_spectrogram(wav_slice):
-    """Converts a single audio slice to a spectrogram tensor."""
-    
-    # We expect a 1D tensor, but the dataset gives us (1, n_samples)
-    # Squeeze it to remove the extra dimension
+    """Converts a single audio slice to a log-spectrogram tensor."""
     wav_slice = tf.squeeze(wav_slice)
-    
-    # Calculate how much padding is needed
     slice_len = tf.shape(wav_slice)[0]
     padding_needed = 48000 - slice_len
     
-    # Add zero padding only if necessary
     if padding_needed > 0:
         zero_padding = tf.zeros([padding_needed], dtype=tf.float32)
         wav = tf.concat([wav_slice, zero_padding], 0)
     else:
-        # If the slice is already 48000 or longer, just use it
         wav = wav_slice
 
-    # Ensure it's exactly 48000 samples by trimming any excess
     wav = tf.slice(wav, [0], [48000])
 
     spectrogram = tf.signal.stft(wav, frame_length=320, frame_step=32)
     spectrogram = tf.abs(spectrogram)
+    
+    # ===================================================================
+    #  THE CRITICAL FIX: Add the log transformation
+    # ===================================================================
+    # Add an epsilon (a very small number) to avoid log(0) which is -infinity
+    spectrogram = tf.math.log(spectrogram + 1e-6)
+    
     spectrogram = tf.expand_dims(spectrogram, axis=2)
     
     return spectrogram
@@ -97,7 +93,7 @@ if uploaded_file is not None:
     if duration is None:
         st.error("Could not process the uploaded file.")
     elif duration > MAX_DURATION_SECONDS:
-        st.error(f"Audio file is too long ({duration:.1f}s). Please upload a file shorter than {MAX_DURATION_SECONDS}s.")
+        st.error(f"Audio file is too long ({duration:.1f}s). Please upload a file shorter than {MAX_SECONDS}s.")
     else:
         st.success(f"Audio file duration: {duration:.1f} seconds. Processing...")
         
@@ -110,9 +106,8 @@ if uploaded_file is not None:
                 )
                 
                 spectrograms = []
-                with st.spinner("Generating spectrograms for each segment..."):
+                with st.spinner("Generating log-spectrograms for each segment..."):
                     for audio_slice_tuple in audio_slices:
-                        # The dataset yields tuples of (data, label), we just need the data
                         spec = create_spectrogram(audio_slice_tuple[0])
                         spectrograms.append(spec)
 
@@ -126,7 +121,6 @@ if uploaded_file is not None:
             yhat = model.predict(spectrogram_batch)
         
         st.header("🔬 Prediction Analysis")
-        
         st.subheader("1. Raw Model Probabilities")
         st.write("These are the direct outputs from the model.")
         st.bar_chart(yhat.flatten())
@@ -134,8 +128,7 @@ if uploaded_file is not None:
             st.write(yhat.flatten())
             
         st.subheader("2. Adjust Prediction Threshold")
-        st.write("Adjust the slider to find the right confidence level for counting calls.")
-        threshold = st.slider("Prediction Threshold", 0.0, 1.0, 0.95, 0.01)
+        threshold = st.slider("Prediction Threshold", 0.0, 1.0, 0.90, 0.01)
 
         predictions = [1 if pred > threshold else 0 for pred in yhat]
         post_processed = [key for key, group in groupby(predictions)]
