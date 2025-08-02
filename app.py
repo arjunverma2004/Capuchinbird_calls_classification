@@ -26,41 +26,19 @@ def load_model():
 model = load_model()
 
 # --- Audio Preprocessing Functions ---
-def load_wav_16k_mono(filename):
+def load_audio_16k_mono(filename):
     """
-    Load an audio file, convert it to a float tensor, resample to 16 kHz
-    single-channel audio. This function is a close replica of your notebook.
+    Load an audio file (MP3 or WAV), convert it to a float tensor, and resample
+    to 16 kHz single-channel audio using librosa.
+    This is the most robust way to handle both file types.
     """
     try:
-        # Load encoded wav file
-        file_contents = tf.io.read_file(filename)
-        # Decode wav (tensors by channels)
-        wav, sample_rate = tf.audio.decode_wav(file_contents, desired_channels=1)
-        # Removes trailing axis
-        wav = tf.squeeze(wav, axis=-1)
-        sample_rate = tf.cast(sample_rate, dtype=tf.int64)
-
-        # Use librosa for resampling inside a numpy_function to be TensorFlow-compatible
-        def _resample_numpy(wav_np, sample_rate_np):
-            return librosa.resample(wav_np, orig_sr=sample_rate_np, target_sr=16000)
-
-        wav = tf.numpy_function(
-            func=_resample_numpy,
-            inp=[wav, sample_rate],
-            Tout=tf.float32)
-
+        wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
+        wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
         return wav
     except Exception as e:
-        # Fallback to librosa.load if the above fails, for robustness
-        st.warning(f"Using librosa.load as a fallback due to an error in tf.audio.decode_wav: {e}")
-        try:
-            wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
-            wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
-            return wav
-        except Exception as e_fallback:
-            st.error(f"Error loading audio file with librosa: {e_fallback}")
-            return None
-
+        st.error(f"Error loading or processing audio file with librosa: {e}")
+        return None
 
 def preprocess_mp3(sample):
     """
@@ -143,12 +121,10 @@ if uploaded_files:
             tmp_path = tmpfile.name
         
         try:
-            wav = load_wav_16k_mono(tmp_path)
+            wav = load_audio_16k_mono(tmp_path)
             
             if wav is not None and len(wav) > 0:
-                # --- FIX: Use overlapping windows with a smaller stride ---
-                # This increases the chances of detecting a call that might be
-                # split between non-overlapping chunks.
+                # Use overlapping windows with a smaller stride to increase detection chances.
                 sequence_length = 48000 # 3 seconds
                 sequence_stride = 16000 # 1-second stride for overlapping windows
                 
@@ -198,3 +174,4 @@ if uploaded_files:
 
 st.markdown("---")
 st.info("Note: The prediction is based on a `0.99` probability threshold for 3-second audio chunks.")
+
