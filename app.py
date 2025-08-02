@@ -15,6 +15,7 @@ def load_model():
         with st.spinner("Loading model..."):
             model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
         return model
+    
     except Exception as e:
         st.error(f"Error loading the model: {e}")
         st.stop()
