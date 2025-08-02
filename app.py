@@ -16,7 +16,7 @@ def load_model():
     try:
         # Suppress the optimizer-related warning which is harmless for inference
         with st.spinner("Loading model..."):
-            model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
+            model = tf.keras.models.load_model('model/calls_classifier.keras', compile=False)
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
@@ -26,13 +26,15 @@ def load_model():
 model = load_model()
 
 # --- Audio Preprocessing Functions ---
-def load_mp3_16k_mono(filename):
+def load_wav_16k_mono(filename):
     """
     Load an audio file, convert it to a float tensor, resample to 16 kHz
-    single-channel audio using librosa.
+    single-channel audio using tf.audio.decode_wav and librosa.
+    This function is based on your notebook's implementation.
     """
     try:
         # Load audio using librosa, resampling to 16kHz and converting to mono
+        # Using 'soxr_hq' for high-quality resampling, matching best practices.
         wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
         # Convert the numpy array to a TensorFlow tensor
         wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
@@ -44,21 +46,15 @@ def load_mp3_16k_mono(filename):
 def preprocess_mp3(sample):
     """
     Convert a 3-second audio clip into a spectrogram for prediction.
+    This function is an exact copy of the one used for inference in your notebook.
     """
-    # Pad the audio clip to a fixed length of 48000 samples
-    # This padding is now redundant as we pad the entire audio file first,
-    # but kept for safety.
+    # sample is expected to be a tensor of shape [48000]
     zero_padding = tf.zeros([48000] - tf.shape(sample), dtype=tf.float32)
     wav = tf.concat([zero_padding, sample], 0)
-    
-    # Convert the padded audio to a spectrogram
     spectrogram = tf.signal.stft(wav, frame_length=320, frame_step=32)
     spectrogram = tf.abs(spectrogram)
-    spectrogram = tf.expand_dims(spectrogram, axis=2) # Add channel dimension
-    
-    # Ensure the shape is consistent for the model
+    spectrogram = tf.expand_dims(spectrogram, axis=2)
     spectrogram = tf.ensure_shape(spectrogram, (1491, 257, 1))
-
     return spectrogram
 
 # --- Main Streamlit App Logic ---
@@ -123,39 +119,32 @@ if uploaded_files:
     for uploaded_file in uploaded_files:
         st.subheader(f"Analyzing: {uploaded_file.name}")
 
-        # Create a temporary file to save the uploaded content
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmpfile:
             tmpfile.write(uploaded_file.getvalue())
             tmp_path = tmpfile.name
         
-        # Check if the file is a valid audio file
         try:
-            wav = load_mp3_16k_mono(tmp_path)
+            # Use the same data loading function as the notebook
+            wav = load_wav_16k_mono(tmp_path)
             
             if wav is not None and len(wav) > 0:
-                # --- FIX: Pad the entire audio file to be a multiple of sequence_length ---
-                sequence_length = 48000 # 3 seconds
-                total_samples = tf.shape(wav)[0]
+                # Use the same slicing as the notebook for long recordings (section 10.1)
+                audio_slices = tf.keras.utils.timeseries_dataset_from_array(
+                    wav, 
+                    wav, 
+                    sequence_length=48000, 
+                    sequence_stride=48000, 
+                    batch_size=1
+                )
                 
-                # Calculate how many zeros to pad to make it a multiple of sequence_length
-                padding_needed = (sequence_length - (total_samples % sequence_length)) % sequence_length
-                wav_padded = tf.pad(wav, [[0, padding_needed]])
-                
-                # Reshape into 3-second slices
-                num_slices = tf.shape(wav_padded)[0] // sequence_length
-                audio_slices = tf.reshape(wav_padded, [num_slices, sequence_length])
-                
-                # Create a TensorFlow dataset
-                audio_dataset = tf.data.Dataset.from_tensor_slices(audio_slices)
-
-                # Preprocess the audio slices to create spectrograms
-                audio_dataset = audio_dataset.map(preprocess_mp3)
+                # Apply the notebook's preprocessing function
+                audio_slices = audio_slices.map(lambda x, i: preprocess_mp3(x[0]))
                 
                 # Process predictions in batches to avoid memory issues
                 all_predictions = []
                 batch_size = 64
                 with st.spinner("Processing audio... This may take a moment."):
-                    for batch in audio_dataset.batch(batch_size):
+                    for batch in audio_slices.batch(batch_size):
                         predictions = model.predict(batch, verbose=0)
                         all_predictions.extend(predictions.flatten())
                 
