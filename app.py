@@ -16,6 +16,7 @@ def load_model():
     try:
         # Suppress the optimizer-related warning which is harmless for inference
         with st.spinner("Loading model..."):
+            # Ensure you have the correct path to your model file
             model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
         return model
     except Exception as e:
@@ -29,29 +30,26 @@ model = load_model()
 def load_audio_16k_mono(filename):
     """
     Load an audio file (MP3 or WAV), convert it to a float tensor, and resample
-    to 16 kHz single-channel audio using librosa. This is the most reliable
-    method for general file types.
+    to 16 kHz single-channel audio using librosa.
     """
     try:
-        wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
-        wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
-        return wav
+        wav_np, _ = librosa.load(filename, sr=16000, mono=True)
+        return tf.convert_to_tensor(wav_np, dtype=tf.float32)
     except Exception as e:
         st.error(f"Error loading or processing audio file with librosa: {e}")
         return None
 
-def preprocess_mp3(sample):
+def preprocess_mp3(sample, index):
     """
     Convert a 3-second audio clip into a spectrogram for prediction.
     This function is an exact copy of the one used for inference in your notebook.
     """
-    # Pad the audio clip to a fixed length of 48000 samples
+    sample = sample[0]
     zero_padding = tf.zeros([48000] - tf.shape(sample), dtype=tf.float32)
     wav = tf.concat([zero_padding, sample], 0)
     spectrogram = tf.signal.stft(wav, frame_length=320, frame_step=32)
     spectrogram = tf.abs(spectrogram)
     spectrogram = tf.expand_dims(spectrogram, axis=2)
-    spectrogram = tf.ensure_shape(spectrogram, (1491, 257, 1))
     return spectrogram
 
 # --- Main Streamlit App Logic ---
@@ -119,47 +117,36 @@ if uploaded_files:
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmpfile:
             tmpfile.write(uploaded_file.getvalue())
             tmp_path = tmpfile.name
-        
+
         try:
             wav = load_audio_16k_mono(tmp_path)
-            
+
             if wav is not None and len(wav) > 0:
-                # Use a more robust overlapping window strategy
-                sequence_length = 48000 # 3 seconds
-                sequence_stride = 16000 # 1-second stride for overlapping windows
-                
+                # Create non-overlapping 3-second chunks (48000 samples)
                 audio_slices = tf.keras.utils.timeseries_dataset_from_array(
-                    wav, 
-                    wav, 
-                    sequence_length=sequence_length, 
-                    sequence_stride=sequence_stride, 
+                    wav,
+                    wav,
+                    sequence_length=48000,
+                    sequence_stride=48000,
                     batch_size=1
                 )
-                
-                # Apply the notebook's preprocessing function
-                audio_slices = audio_slices.map(lambda x, i: preprocess_mp3(x[0]))
-                
-                # Process predictions in batches to avoid memory issues
-                all_predictions = []
-                batch_size = 64
-                with st.spinner("Processing audio... This may take a moment."):
-                    for batch in audio_slices.batch(batch_size):
-                        predictions = model.predict(batch, verbose=0)
-                        all_predictions.extend(predictions.flatten())
-                
-                # Convert predictions to binary classes using the specified threshold
-                class_preds = [1 if prediction > 0.99 else 0 for prediction in all_predictions]
-                
+
+                # Apply the exact preprocessing function from the notebook
+                audio_slices = audio_slices.map(preprocess_mp3)
+                audio_slices = audio_slices.batch(64)
+
+                yhat = model.predict(audio_slices)
+                class_preds = [1 if prediction > 0.99 else 0 for prediction in yhat]
+
                 # Group consecutive detections to count unique calls
-                calls = tf.math.reduce_sum([key for key, group in groupby(class_preds)]).numpy()
-                
+                postprocessed = tf.math.reduce_sum([key for key, group in groupby(class_preds)]).numpy()
+
                 with st.container(border=True):
                     st.markdown(f"**Filename:** `{uploaded_file.name}`")
                     st.audio(uploaded_file, format='audio/wav')
-                    
-                    if calls > 0:
-                        st.markdown(f'<div class="success-box">✅ **Result:** Capuchinbird calls detected! ({int(calls)} calls)</div>', unsafe_allow_html=True)
-                        st.markdown(f"*(Note: The model detected {sum(class_preds)} audio segments with a high probability.)*")
+
+                    if postprocessed > 0:
+                        st.markdown(f'<div class="success-box">✅ **Result:** Capuchinbird calls detected! ({int(postprocessed)} calls)</div>', unsafe_allow_html=True)
                     else:
                         st.markdown('<div class="warning-box">⚠️ **Result:** No Capuchinbird calls detected.</div>', unsafe_allow_html=True)
 
