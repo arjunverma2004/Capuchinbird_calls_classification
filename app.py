@@ -49,7 +49,7 @@ def load_audio_16k_mono(filename):
         return None
 
 def create_spectrogram(wav_slice):
-    """Converts a single audio slice to a log-spectrogram tensor."""
+    """Converts a single audio slice to a normalized log-spectrogram."""
     wav_slice = tf.squeeze(wav_slice)
     slice_len = tf.shape(wav_slice)[0]
     padding_needed = 48000 - slice_len
@@ -64,21 +64,23 @@ def create_spectrogram(wav_slice):
 
     spectrogram = tf.signal.stft(wav, frame_length=320, frame_step=32)
     spectrogram = tf.abs(spectrogram)
-    
-    # ===================================================================
-    #  THE CRITICAL FIX: Add the log transformation
-    # ===================================================================
-    # Add an epsilon (a very small number) to avoid log(0) which is -infinity
     spectrogram = tf.math.log(spectrogram + 1e-6)
     
-    spectrogram = tf.expand_dims(spectrogram, axis=2)
+    # ===================================================================
+    #  THE FINAL FIX: Normalize the spectrogram to the [0, 1] range
+    # ===================================================================
+    min_val = tf.reduce_min(spectrogram)
+    max_val = tf.reduce_max(spectrogram)
+    # Add a small epsilon to avoid division by zero for silent clips
+    spectrogram = (spectrogram - min_val) / (max_val - min_val + 1e-6)
     
+    spectrogram = tf.expand_dims(spectrogram, axis=2)
     return spectrogram
 
 
 # --- Main Application UI ---
-st.title("🐦 Capuchinbird Call Classifier & Debugger")
-st.write("Upload an audio file to count Capuchinbird calls. Use the tools below to debug predictions.")
+st.title("🐦 Capuchinbird Call Classifier")
+st.write("Upload an audio file (WAV or MP3) to count the number of distinct Capuchinbird calls.")
 st.info(f"ℹ️ Audio files are limited to **{MAX_DURATION_SECONDS} seconds**.")
 
 uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "wav"])
@@ -93,7 +95,7 @@ if uploaded_file is not None:
     if duration is None:
         st.error("Could not process the uploaded file.")
     elif duration > MAX_DURATION_SECONDS:
-        st.error(f"Audio file is too long ({duration:.1f}s). Please upload a file shorter than {MAX_SECONDS}s.")
+        st.error(f"Audio file is too long ({duration:.1f}s). Please upload a file shorter than {MAX_DURATION_SECONDS}s.")
     else:
         st.success(f"Audio file duration: {duration:.1f} seconds. Processing...")
         
@@ -106,7 +108,7 @@ if uploaded_file is not None:
                 )
                 
                 spectrograms = []
-                with st.spinner("Generating log-spectrograms for each segment..."):
+                with st.spinner("Generating normalized log-spectrograms..."):
                     for audio_slice_tuple in audio_slices:
                         spec = create_spectrogram(audio_slice_tuple[0])
                         spectrograms.append(spec)
@@ -120,23 +122,22 @@ if uploaded_file is not None:
         with st.spinner("Running model prediction..."):
             yhat = model.predict(spectrogram_batch)
         
-        st.header("🔬 Prediction Analysis")
-        st.subheader("1. Raw Model Probabilities")
-        st.write("These are the direct outputs from the model.")
-        st.bar_chart(yhat.flatten())
-        with st.expander("Show Raw Values as Text"):
-            st.write(yhat.flatten())
-            
-        st.subheader("2. Adjust Prediction Threshold")
-        threshold = st.slider("Prediction Threshold", 0.0, 1.0, 0.90, 0.01)
-
+        # --- Set a fixed threshold for classification ---
+        threshold = 0.8
+        
         predictions = [1 if pred > threshold else 0 for pred in yhat]
         post_processed = [key for key, group in groupby(predictions)]
         num_capuchin_calls = int(np.sum(post_processed))
 
-        st.subheader("3. Final Result")
-        st.success(f"**With a threshold of `{threshold}`,"
-                   f" found {num_capuchin_calls} distinct Capuchinbird call(s).**")
+        # --- Final Result ---
+        st.header("Analysis Complete")
+        st.success(f"**Found {num_capuchin_calls} distinct Capuchinbird call(s).**")
+        st.write(f"(Using a prediction threshold of {threshold})")
+
+        with st.expander("Show Detailed Prediction Scores"):
+            st.write("These are the model's confidence scores for each 3-second segment of the audio. Scores above the threshold are counted as a call.")
+            st.bar_chart(yhat.flatten())
+            st.write("Raw probabilities:", yhat.flatten())
 
     if 'tmp_filename' in locals() and os.path.exists(tmp_filename):
         os.remove(tmp_filename)
