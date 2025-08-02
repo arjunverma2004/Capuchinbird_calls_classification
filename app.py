@@ -7,7 +7,7 @@ import numpy as np
 from itertools import groupby
 
 # --- IMPORTANT: This must be the very first Streamlit command. ---
-st.set_page_config(page_title="Capuchinbird Call Classifier", layout="centered")
+st.set_page_config(page_title="models/calls_classifier.keras", layout="centered")
 
 # Load the pre-trained model
 @st.cache_resource
@@ -16,7 +16,7 @@ def load_model():
     try:
         # Suppress the optimizer-related warning which is harmless for inference
         with st.spinner("Loading model..."):
-            model = tf.keras.models.load_model('models/calls_classifier.keras', compile=False)
+            model = tf.keras.models.load_model('Capuchinbird_calls_classifier.keras', compile=False)
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
@@ -33,7 +33,7 @@ def load_mp3_16k_mono(filename):
     """
     try:
         # Load audio using librosa, resampling to 16kHz and converting to mono
-        # The 'res_type' parameter can be set for different resampling quality.
+        # Using 'soxr_hq' for high-quality resampling, matching best practices.
         wav_np, _ = librosa.load(filename, sr=16000, mono=True, res_type='soxr_hq')
         # Convert the numpy array to a TensorFlow tensor
         wav = tf.convert_to_tensor(wav_np, dtype=tf.float32)
@@ -133,13 +133,12 @@ if uploaded_files:
         
         # Check if the file is a valid audio file
         try:
-            # The load_mp3_16k_mono function handles both .wav and .mp3
             wav = load_mp3_16k_mono(tmp_path)
             
             if wav is not None and len(wav) > 0:
-                # Create a TensorFlow dataset from the audio slices
+                # --- FIX: Match the original notebook's sequence_stride ---
                 sequence_length = 48000 # 3 seconds
-                sequence_stride = 16000 # 1 second stride
+                sequence_stride = 48000 # Correctly set to match notebook (non-overlapping chunks)
                 
                 audio_slices = tf.keras.utils.timeseries_dataset_from_array(
                     wav, 
@@ -152,8 +151,7 @@ if uploaded_files:
                 # Preprocess the audio slices to create spectrograms
                 audio_slices = audio_slices.map(preprocess_mp3)
                 
-                # --- MEMORY OPTIMIZATION FIX ---
-                # We will process the audio in batches to avoid a huge memory allocation.
+                # Process predictions in batches to avoid memory issues
                 all_predictions = []
                 batch_size = 64
                 with st.spinner("Processing audio... This may take a moment."):
@@ -161,9 +159,12 @@ if uploaded_files:
                         predictions = model.predict(batch, verbose=0)
                         all_predictions.extend(predictions.flatten())
                 
-                # Convert predictions to binary classes
+                # Convert predictions to binary classes using the specified threshold
                 class_preds = [1 if prediction > 0.99 else 0 for prediction in all_predictions]
                 
+                # Count the total number of detected segments
+                detected_segments = sum(class_preds)
+
                 # Group consecutive detections to count unique calls
                 calls = tf.math.reduce_sum([key for key, group in groupby(class_preds)]).numpy()
                 
@@ -173,6 +174,7 @@ if uploaded_files:
                     
                     if calls > 0:
                         st.markdown(f'<div class="success-box">✅ **Result:** Capuchinbird calls detected! ({int(calls)} calls)</div>', unsafe_allow_html=True)
+                        st.markdown(f"*(Note: The model detected {detected_segments} audio segments with a high probability.)*")
                     else:
                         st.markdown('<div class="warning-box">⚠️ **Result:** No Capuchinbird calls detected.</div>', unsafe_allow_html=True)
 
@@ -186,4 +188,5 @@ if uploaded_files:
                 os.remove(tmp_path)
 
 st.markdown("---")
-st.info("Note: This app uses a pre-trained model to classify audio. The model's performance may vary.")
+st.info("Note: The prediction is based on a `0.99` probability threshold for 3-second audio chunks.")
+
