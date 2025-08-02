@@ -11,7 +11,7 @@ from itertools import groupby
 def load_model():
     """Loads the pre-trained Capuchinbird call classifier model."""
     try:
-        model = tf.keras.models.load_model('Capuchinbird_calls_classifier.keras')
+        model = tf.keras.models.load_model('models/calls_classifier.keras')
         return model
     except Exception as e:
         st.error(f"Error loading the model: {e}")
