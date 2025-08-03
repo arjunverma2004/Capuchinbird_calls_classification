@@ -94,7 +94,7 @@ st.markdown("""
 
 # --- Main Application ---
 st.markdown('<div class="main-header">Capuchinbird Call Classifier 🦜</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Upload audio (MP3, WAV) up to 15 minutes long.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Upload audio (MP3, WAV)  to detect Capuchinbird calls.</div>', unsafe_allow_html=True)
 st.info(f"ℹ️ For stability on this free platform, audio files are limited to **{MAX_DURATION_SECONDS} seconds**.")
 
 uploaded_file = st.file_uploader("Choose an audio file", type=["mp3", "wav"])
